@@ -135,24 +135,30 @@ def detect_fruit_and_save_image(image_path, target_fruit='apple', output_path='o
     print(f'\nPixels from {target_fruit} to bottom-right corner:')
     print('x (pixels):', relative_x_fruit_pixels)
     print('x (mm):', relative_x_fruit_mm)
-    print()
     print('y (pixles):', relative_y_fruit_pixels)
     print('y (mm):', relative_y_fruit_mm)
 
     return relative_x_fruit_mm, relative_y_fruit_mm
 
 # 
-image_path = 'ban.jpg'  # Replace with image path
+image_path = 'ban_new.jpg'  # Replace with image path
 output_image = 'box_with_fruits_and_edges_marked.jpg'  # Path to save the image with marked dots
-target_fruit = 'banana'  # Specify the fruit to mark with red dots
+
+fruits_list = ['banana', 'apple', 'orange']
+fruit_index = int(input('Choose index following [0, 1, 2] = [banana, apple, orange]: '))
+target_fruit = fruits_list[fruit_index]  # Specify the fruit to mark with red dots0
+
 relative_x_fruit_mm, relative_y_fruit_mm = detect_fruit_and_save_image(image_path, target_fruit, output_image)
 
 # Distances from bottom-right corner of box to the base system of Hubert
 box_bottom_right_corner_to_base_system_x = 60 #mm
-box_bottom_right_corner_to_base_system_y = 0  #mm
+box_bottom_right_corner_to_base_system_y = -120  #mm
 box_bottom_right_corner_to_base_system_z = 94 #mm
 
-relative_z_fruit_mm = 30 #start with set value to begin with
+if fruit_index == 0: #banana
+    relative_z_fruit_mm = 70 #start with set value to begin with
+else: #apple or orange
+    relative_z_fruit_mm = 70
 
 fruit_position_base_system_x = box_bottom_right_corner_to_base_system_x + relative_y_fruit_mm
 fruit_position_base_system_y = box_bottom_right_corner_to_base_system_y + relative_x_fruit_mm
@@ -160,7 +166,7 @@ fruit_position_base_system_z = box_bottom_right_corner_to_base_system_z + relati
 
 fruit_position_base_system = [fruit_position_base_system_x, fruit_position_base_system_y, fruit_position_base_system_z]
 
-print("Fruit pos base system: ", fruit_position_base_system)
+print("\nFruit pos base system (mm): ", fruit_position_base_system)
 
 class InverseKinematicsNN(nn.Module):
     def __init__(self):
@@ -183,11 +189,10 @@ class InverseKinematicsNN(nn.Module):
         return x
 
 model = InverseKinematicsNN()
-model.load_state_dict(torch.load('NN_50_000epoch'))
+model.load_state_dict(torch.load('NN_50_000epoch_diffLATESTV2'))
 
 test_position = torch.tensor(fruit_position_base_system, dtype=torch.float32)/1000
-print()
-print('Test pos: ', test_position)
+print('\nTest pos (m): ', test_position)
 print()
 
 # Put your model in evaluation mode
@@ -206,10 +211,15 @@ print()
 def angle_to_millisec(ls): #body, shoulder, elbow
     theta1, theta2, theta3 = ls
     
-    body_servo = 2320 - (theta1/180 * (2320 - 540)) #theta1/180 * (2330 - 560) + 1700 #560
-    shoulder_servo = 2300 - (theta2/180 * (2300 - 1100))
-    elbow_servo = 550 + (theta3/90 * (2400 - 550))
+    body_servo = 540 + ((-theta1+90)/180) * (2320 - 540) 
+    shoulder_servo = 1250 + (theta2/90 * (2050 - 1250))
+    elbow_servo = 550 + ((theta3+90)/180 * (2370 - 550))
     
+     # Clamp the servo positions to their respective limits
+    body_servo = max(540, min(body_servo, 2320))  # Min: 540, Max: 2320
+    shoulder_servo = max(1250, min(shoulder_servo, 2050))  # Min: 1250, Max: 2050
+    elbow_servo = max(550, min(elbow_servo, 2370))  # Min: 550, Max: 2370
+
     return body_servo, shoulder_servo, elbow_servo
 
 body_servo, shoulder_servo, elbow_servo = angle_to_millisec(predicted_angles_deg)
@@ -217,38 +227,45 @@ body_servo, shoulder_servo, elbow_servo = angle_to_millisec(predicted_angles_deg
 print('Body servo [ms]: ', body_servo)
 print('Shoulder servo [ms]: ', shoulder_servo)
 print('Elbow servo [ms]: ', elbow_servo)
+print()
 
+import serial
+import time
 
+def send_command(arduino, body, shoulder, elbow, gripper=None):
+    # Send the servo values to the Arduino as a single string
+    servo_data = f"{body},{shoulder},{elbow}"
+    if gripper is not None:
+        servo_data += f",{gripper}"  # Add gripper value if specified
+    servo_data += "\n"
+    arduino.write(servo_data.encode('utf-8'))
+    time.sleep(1)  # Give some time for Arduino to process the command
+
+# Establish serial connection
 port_name = '/dev/cu.usbmodem101'
-arduino = serial.Serial(port=port_name, baudrate=57600, timeout=.1)
-time.sleep(2)
-#arduino.write(bytes(body_servo))  # Send input to Arduino
-#arduino.write(bytes(shoulder_servo))  # Send input to Arduino
-#arduino.write(bytes(elbow_servo))  # Send input to Arduino
+arduino = serial.Serial(port=port_name, baudrate=57600, timeout=.2)
+arduino.dtr = False  # Prevent Arduino reset on connection
+time.sleep(2)  # Delay to stabilize serial connection
 
-#arduino.reset_input_buffer()
-#arduino.reset_output_buffer()
+# Send the initial servo positions to the Arduino
+send_command(arduino, body_servo, shoulder_servo, elbow_servo)
 
-servo_data = f"{body_servo},{shoulder_servo},{elbow_servo}\n"
-arduino.write(servo_data.encode('utf-8'))
-time.sleep(1)
+# Wait for Arduino response (optional, can be removed if not needed)
+response = arduino.readline().decode('utf-8').strip()
+if response:
+    print("Arduino says:", response)
 
-print('jeh')
-
-a = 0
+# Wait for manual input from the user
 while True:
-    if a == 0:
-        arduino.write(servo_data.encode('utf-8'))
-        a += 1
-    response = arduino.readline().decode('utf-8').strip()
-    time.sleep(1)
-    if response != '':
-        print("Arduino says:", response)
+    command = input("Enter 'close' to close the gripper and move the robot: ")
+    if command.lower() == "close":
+
+        print('OK')
+        
+        command += "\n"
+        arduino.write(command.encode('utf-8'))
+        time.sleep(5)
+        
+        break  # End the loop and finish the program
     else:
-        continue
-
-#arduino.write(f"{body_servo}\n".encode('utf-8'))  # Send body servo
-#arduino.write(f"{shoulder_servo}\n".encode('utf-8'))  # Send shoulder servo
-#arduino.write(f"{elbow_servo}\n".encode('utf-8'))  # Send elbow servo
-
-# x = Serial.readString().toInt();
+        print("Unknown command. Please type 'close' to continue.")
