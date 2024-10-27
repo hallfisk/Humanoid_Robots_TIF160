@@ -5,7 +5,7 @@ This project involves enabling a humanoid robot, Hubert, to autonomously detect 
 
 ## Directory Structure
 
-- **Hubert_Code/**: Contains the main code for controlling Hubert's movements and interactions.
+- **Hubert_Code.ino**: Contains the main code for controlling Hubert's movements and interactions.
   
 - **experiment_adam_lr0.0002/**, **experiment_adam_lr0.001/**, **experiment_adam_lr0.01/**: Folders containing training and testing results for experiments using the Adam optimizer with different learning rates.
 
